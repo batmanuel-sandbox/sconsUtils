@@ -64,6 +64,15 @@ class Control(object):
         self._tmpDir = tmpDir
         self._cwd = os.path.abspath(os.path.curdir)
 
+        # Calculate the absolute path for temp dir if it is relative.
+        # This assumes the temp dir is relative to where the tests SConscript
+        # file is located. SCons will know how to handle this itself but
+        # some options require the code to know where to write things.
+        if os.path.isabs(self._tmpDir):
+            self._tmpDirAbs = self._tmpDir
+        else:
+            self._tmpDirAbs = os.path.join(self._cwd, self._tmpDir)
+
         self._verbose = verbose
 
         self._info = {}                 # information about processing targets
@@ -148,6 +157,7 @@ class Control(object):
             else:
                 interpreter = "pytest -Wd --junit-xml=${TARGET}.xml"
                 interpreter += " --junit-prefix={0}".format(self.junitPrefix())
+                interpreter += self._pytestCoverage(prefix="${TARGET}")
 
             if self.ignore(f):
                 continue
@@ -229,6 +239,8 @@ class Control(object):
         # run failed tests.
         interpreter = "pytest -Wd --lf --junit-xml=${TARGET} --session2file=${TARGET}.out"
         interpreter += " --junit-prefix={0}".format(self.junitPrefix())
+        interpreter += self._pytestCoverage()
+
         target = os.path.join(self._tmpDir, "pytest-{}.xml".format(self._env['eupsProduct']))
 
         # Work out how many jobs scons has been configured to use
@@ -273,3 +285,38 @@ class Control(object):
             prefix += ".{0}".format(os.environ[controlVar])
 
         return prefix
+
+    def _pytestCoverage(self, prefix="pytest"):
+        """Form the additional arguments required to enable coverage testing.
+        Prefix is used to form the output files.
+        """
+
+        options = ""
+
+        # if we have a standard package layout, restrict coverage to the
+        # python code and do not include the tests.
+        if os.path.exists("python") or os.path.exists(os.path.join(os.path.pardir, "python")):
+            options += " --cov=python"
+        else:
+            # Default to coverage for everything in this directory and below
+            options += " --cov=."
+
+        options += " --cov-branch --cov-report=term "
+
+        covfile = "{}-cov-{}.xml".format(prefix, self._env['eupsProduct'])
+
+        # We should specify the output directory explicitly unless the prefix
+        # indicates that we are using the SCons target
+        if covfile.startswith("${TARGET}"):
+            covpath = covfile
+        else:
+            covpath = os.path.join(self._tmpDirAbs, covfile)
+        options += " --cov-report=xml:'{}'".format(covpath)
+
+        # Use a prefix for the HTML if the prefix is not the default
+        htmlfile = ""
+        if prefix != "pytest":
+            htmlfile = ":'htmlcov-{}'".format(prefix)
+        options += " --cov-report=html{}".format(htmlfile)
+        print("Coverage options: ", options)
+        return options
